@@ -1,0 +1,220 @@
+---
+title: "CSC8491_Final_PredConsum_Jaghab"
+output: html_notebook
+---
+
+#Read in File
+```{r}
+students <- read.csv(file = "/Users/eli/Desktop/Data\ Mining\ and\ DB\ Programming/Final/student_alcohol.csv", stringsAsFactors = TRUE)
+```
+
+#Inspect Data
+```{r}
+summary(students)
+```
+#Remove Student ID (Does Not Provide Useful Value to Model)
+```{r}
+students <- subset(students, select = -studentid)
+```
+
+#Investigate Target Variable Proportions - The Majority of Students Do Not Heavily Drink on the Weekends
+```{r}
+table(students$Walc)
+prop.table(table(students$Walc))
+```
+
+#Create Correlogram to View Variable Correlations - https://www.youtube.com/watch?v=RFnI-JmQh84
+#Check for Highly Correlated Features - None of the Features are that Highly Correlated
+```{r}
+library(corrgram)
+corrgram(students, lower.panel=panel.shade, upper.panel=panel.cor, 
+	text.panel=panel.txt, main="Teen Drinking is Very Bad (Yo, I got a fake ID though)", cex.labels = 1.2)
+```
+
+#Create Column of Walc Threshold using 4 and Above - Convert to Yes and No
+```{r}
+students$Walc <- ifelse(students$Walc >= 4, "Yes", "No")
+prop.table(table(students$Walc))
+```
+
+#Create Training and Test Data Sets
+```{r}
+#Villanova ID Number Seed
+set.seed(01618670)
+
+#Training Data Percentage
+trainPct <- 0.8
+
+#Create Training and Test Data Sets
+drinkTrainRows <- sample(1:nrow(students), trainPct * nrow(students))
+studentTrain <- students[drinkTrainRows,]
+studentTest <- students[-drinkTrainRows,]
+```
+
+#Decision Tree Model on Training Data Set to Predict Heavy Weekend Alcohol Consumption
+```{r}
+library(tree)
+set.seed(01618670)
+treeTrain <- tree(as.factor(Walc) ~ ., studentTrain)
+treeTrainPred <- predict(treeTrain, studentTest, type = "class")
+data.frame(treeTrainPred, studentTest$Walc)
+
+library(caret)
+drinkTreeMatrix <- confusionMatrix(treeTrainPred, as.factor(studentTest$Walc), mode = "prec_recall", positive = 'Yes')
+drinkTreeMatrix
+
+#Change Positive to No to Improve Recall
+drinkTreeMatrix2 <- confusionMatrix(treeTrainPred, as.factor(studentTest$Walc), mode = "prec_recall", positive = 'No')
+drinkTreeMatrix2
+```
+
+#Build Random Forest using Training Set
+```{r}
+library(tree)
+set.seed(01618670)
+rfTrain <- randomForest(as.factor(Walc)~., studentTrain, importance = TRUE, ntrees = 150, positive = 'Yes')
+rfTrain2 <- randomForest(as.factor(Walc)~., studentTrain, importance = TRUE, ntrees = 150, positive = 'No')
+
+varImpPlot(rfTrain)
+```
+
+#Use Random Forest Model on Test Set
+```{r}
+library(tree)
+rfTestPred <- predict(rfTrain, studentTest, importance = TRUE, type = 'class')
+rfTestPred2 <- predict(rfTrain2, studentTest, importance = TRUE, type = 'class')
+library(caret)
+drinkTestMatrix <-confusionMatrix(rfTestPred, as.factor(studentTest$Walc), mode = "prec_recall", positive = "Yes")
+drinkTestMatrix
+
+#Change Positive to No to Improve Recall
+drinkTestMatrix2 <-confusionMatrix(rfTestPred2, as.factor(studentTest$Walc), mode = "prec_recall", positive = "No")
+drinkTestMatrix2
+
+data.frame(rfTestPred2, studentTest$Walc)
+```
+
+#Build Boosted Decision Tree
+```{r}
+#Convert Target to 0s and 1s
+studentTrainBoost <- studentTrain
+studentTrainBoost$Walc <- ifelse(studentTrainBoost$Walc == "Yes", 1, 0)
+studentTestBoost <- studentTest
+studentTestBoost$Walc <- ifelse(studentTestBoost$Walc == "Yes", 1, 0)
+
+#Boosted Model with 1000 Sequentially Grown Trees
+library(gbm)
+set.seed(01618670)
+drinkTrainBoost = gbm(Walc~.,data=studentTrainBoost,n.trees=150, distribution = "bernoulli", verbose=TRUE)
+
+#Make Predictions
+boostPred <- predict(drinkTrainBoost, studentTestBoost, n.trees = 150, type = "response")
+
+#Convert Probabilities to Text Values
+boostPred = ifelse(boostPred > 0.5,"Yes","No")
+
+#Confusion Matrix/Accuracy
+drinkBoostMatrix <- confusionMatrix(as.factor(boostPred), factor(studentTest$Walc), mode = "prec_recall", positive = "Yes")
+drinkBoostMatrix
+
+#Change Positive Class to No to Improve Recall
+drinkBoostMatrix2 <- confusionMatrix(as.factor(boostPred), factor(studentTest$Walc), mode = "prec_recall", positive = "No")
+drinkBoostMatrix2
+```
+
+#Build Naive Bayes Model
+```{r}
+library(e1071)
+drinkBayes <- naiveBayes(Walc ~ ., studentTrain, positive = 'Yes')
+drinkBayes2 <- naiveBayes(Walc ~ ., studentTrain, positive = 'No')
+
+#Evaluate
+drinkBayesPred <- predict(drinkBayes, studentTest)
+drinkBayesPred2 <- predict(drinkBayes2, studentTest)
+
+drinkBayesMatrix <- confusionMatrix(as.factor(drinkBayesPred), as.factor(studentTest$Walc), positive = "Yes", mode = "prec_recall")
+drinkBayesMatrix
+
+#Change Positive Class to No to Improve Recall
+drinkBayesMatrix2 <- confusionMatrix(as.factor(drinkBayesPred2), as.factor(studentTest$Walc), positive = "No", mode = "prec_recall")
+drinkBayesMatrix2
+```
+
+#Build Neural Network
+```{r}
+
+#Convert Data to Matrix
+studentsMatrix <- data.matrix(students, rownames.force = NA)
+studentsMatrix <- as.data.frame(studentsMatrix)
+studentsMatrix$Walc <- ifelse(studentsMatrix$Walc > 1, 1, 0)
+
+#Training Data Percentage
+trainPct <- 0.8
+
+#Create Training and Test Data Sets
+drinkTrainRowsM <- sample(1:nrow(studentsMatrix), trainPct * nrow(studentsMatrix))
+studentTrainM <- studentsMatrix[drinkTrainRowsM,]
+studentTestM <- studentsMatrix[-drinkTrainRowsM,]
+
+#Build NN
+library(neuralnet)
+set.seed(01618670)
+drinkNn <- neuralnet(Walc ~ ., studentTrainM, hidden = c(10, 3), act.fct = "logistic",
+                linear.output = T)
+plot(drinkNn)
+
+#Evaluate Neural Network - https://datascienceplus.com/neuralnet-train-and-test-neural-networks-using-r/
+resultsNn <- compute(drinkNn, studentTestM)
+results <- data.frame(Prediction = resultsNn$net.result, Reference = studentTestM$Walc)
+results
+
+roundedResults <- data.frame(sapply(results, round, digits = 0))
+table(roundedResults)
+
+#Neural Network Recall Calculation - 18/(18+6) = .75
+```
+#•	A table showing how your predictions compared to the actual values in the test set
+data.frame(rfTestPred2, studentTest$Walc)
+ 
+#•	Your calculation of the % of students in the test set you classified correctly
+
+#The highest accuracy score I was able to attain was 78% using a Boosted Tree Model. 
+
+#•	An assessment of whether your model gave more accurate results than always predicting the most commonly occurring class in the data.
+
+#All of the models I used performed better when changing the positive score to 'No' instead of 'Yes'. My assumption for this is because the data set has 66% of students in the No category and 33% in the Yes Category for Heavy Alcohol consumption. As a result, there is more data on students who do not heavily drink on the weekend and the model can better identify true positives and minimize the false negatives in making a prediction. 
+
+#•	A written description of why you took the approach you took (between a few paragraphs and one page)
+
+
+# For this data set, since we are predicting alcohol consumption, I thought it would be best to prioritize the Recall score of the models that I used. I choose to take this route because I believe that it is most important to minimize the quantity of False Negatives in the data set. It is important to have an overfitting model that identifies more students that drink at the cost of potentially misidentifying some students who do not heavily drink. In other words, I believe that it is ok to label some students as heavy drinkers even if they aren't. My approach is better safe then sorry when identifying alcohol consumption in kids. As a result, the precision score of the model may not be as high.
+
+#First, I read the csv file into R studio and ran summary on the data. I noticed that there was an inclusion of unique student id, so I removed this column from the data set as this would not provide any meaningful value. I then ran proportions on the target variables and noticed that a small percentage of student heavily consume on the weekend (33%). I ran a correlogram  on the variables to determine if any features were highly correlated and none were. I then created a column of Walc using Yes and No using the 4 threshold. After the data was prepared, I ran each of the machine learning models we learned to get a feel for which models did well and which models did not do well, specifically looking at recall percentages.
+
+#After comparing the scores of each model and manipulating the parameters, I came to the conclusion that the random forest model did the best in terms of recall when using the positive class as 'No' to generate a prediction. This model scored 77% accuracy, 75% in precision and 95% in recall. According to the Mean Decrease Accuracy and Mean Decrease Gini score from my Random Forest 2 model, I found that Workday Alcohol Consumption, Going out with Friends, Gender, Absences, and the Mother or Father's job are influential characteristics of individuals that drink heavy on the weekend. I attached an excel sheet with the comparisons of the values of each of my models. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
